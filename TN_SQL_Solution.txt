@@ -1,0 +1,207 @@
+xt/*
+Tables:
+Customers (
+	CustomerID INT, 
+	CustomerName VARCHAR(50), 
+	Age INT, 
+	City VARCHAR(50)
+)
+
+Orders (
+	OrderID INT, 
+	CustomerID INT, 
+	OrderDate DATE, 
+	ProductID INT, 
+	UnitsSold INT, 
+	TotalAmount DECIMAL(10, 2)
+)
+
+ProductReviews (
+	ReviewID INT, 
+	ProductID INT, 
+	Rating INT, 
+	ReviewDate DATE
+)
+*/
+
+/*
+**Question 1:**
+
+Write a SQL query to retrieve the total number of orders for each customer from the "Orders" table. Include the customer's name and the order count in the result set. Order the result by the order count in descending order.
+*/
+
+SELECT
+	COALESCE(b.CustomerName,b.CustomerID) as CustomerName, -- If there is no customer name available will return the CustomerID instead
+	COUNT(DISTINCT(a.OrderID)) as total_orders
+FROM
+	Orders as a
+JOIN Customers as b 
+ON a.CustomerID = b.CustomerID
+GROUP BY 1
+ORDER BY 2 DESC;
+
+/*
+**Question 2:**
+
+Write a SQL query to update the "Customers" table by setting the city of all customers from "London" to "New York". Ensure that the query only updates the customers who have at least one order placed in the "Orders" table.
+*/
+UPDATE Customers
+SET City = 'New York'
+WHERE City = "London" AND CustomerID IN (
+	SELECT CustomerID
+	FROM (
+		SELECT
+			CustomerID,
+			COUNT(DISTINCT(OrderID)) as total_orders
+		FROM
+			Orders
+		GROUP BY 1
+		HAVING COUNT(DISTINCT(OrderID)) > 1
+	)
+
+);
+
+
+/*
+**Question 3:**
+
+Write a SQL query to calculate the total units sold for each month and year combination. Include the month, year, and total units sold in the result set. Order the result by the year and month in ascending order
+*/
+-- It was not clear to me if the question was requesting Year and month combined in one column or separate. I will provide 2 possible solutions:
+-- Solution 1
+SELECT
+	to_char(OrderDate, 'YYYY-MM') as yr_mo,
+	SUM(UnitsSold) as total_units_sold
+FROM
+	Orders
+GROUP BY 1
+ORDER BY 1 ASC;
+
+-- Solution 2
+SELECT
+	EXTRACT(month from OrderDate) as mo,
+	EXTRACT(year from OrderDate) as yr,
+	SUM(UnitsSold) as total_units_sold
+FROM
+	Orders
+GROUP BY 1,2
+ORDER BY 2 ASC, 1 ASC;
+	
+
+
+/*
+**Question 4:**
+
+Write a SQL query to retrieve the top 5 customers based on their total order amounts from the "Orders" table. Include the customer's name and the total order amount in the result set. Order the result by the total order amount in descending order.
+*/
+
+--This solution accounts for possibility of ties in the top 5 Customers
+with customers_order_history AS (
+	SELECT
+		COALESCE(b.CustomerName,b.CustomerID) as CustomerName, -- If there is no customer name available will return the CustomerID instead
+		SUM(a.TotalAmount) as total_order_amount
+	FROM
+		Orders as a
+	JOIN
+		Customers as b
+	ON a.CustomerID = b.CustomerID
+	GROUP BY 1
+),
+customers_ranked as (
+	SELECT
+		CustomerName,
+		total_order_amount,
+		DENSE_RANK() OVER(ORDER BY total_order_amount DESC) as rnk
+	FROM
+		customers_order_history
+)
+SELECT
+	CustomerName,
+	total_order_amount
+FROM
+	customers_ranked
+WHERE
+	rnk <= 5
+ORDER BY 2 DESC;
+
+
+
+
+/*
+**Question 5:**
+
+Write a SQL query to find the top 3 customers with the highest total order amount in the last 3 months. Include the customer's name and the total order amount in the result set.
+*/
+
+--This solution accounts for possibility of ties in the top 3 Customers
+with customers_order_history AS (
+	SELECT
+		COALESCE(b.CustomerName,b.CustomerID) as CustomerName, -- If there is no customer name available will return the CustomerID instead
+		SUM(a.TotalAmount) as total_order_amount
+	FROM
+		Orders as a
+	JOIN
+		Customers as b
+	ON a.CustomerID = b.CustomerID
+	WHERE a.OrderDate BETWEEN CURRENT_DATE - INTERVAL '3 months' AND CURRENT_DATE
+	GROUP BY 1
+),
+customers_ranked as (
+	SELECT
+		CustomerName,
+		total_order_amount,
+		DENSE_RANK() OVER(ORDER BY total_order_amount DESC) as rnk
+	FROM
+		customers_order_history
+)
+SELECT
+	CustomerName,
+	total_order_amount
+FROM
+	customers_ranked
+WHERE
+	rnk <= 3
+ORDER BY 2 DESC;
+
+/*
+**Question 6:**
+
+Write a SQL query to calculate the monthly sales growth rate for each product. Include the product ID, product name, and the sales growth rate in the result set. Order the result by the product ID in ascending order.
+*/
+
+-- There is no product_name in any table? Create product details table
+/*
+ProductDetails (
+	ProductID INT,
+	ProductName VARCHAR(50)
+)
+
+*/
+
+with product_sales AS (SELECT
+	to_char(OrderDate, 'YYYY-MM') as yr_mo,
+	ProductID,
+	SUM(TotalAmount) as total_sales
+FROM
+	Orders
+GROUP BY 1,2),
+lagged_product_sales AS (
+	SELECT
+		yr_mo,
+		ProductID,
+		total_sales,
+		LAG(total_sales,1) OVER(PARITION BY ProductID ORDER BY yr_mo ASC) as prior_month_total_sales
+	FROM
+		product_sales
+)
+SELECT
+	a.yr_mo,
+	a.ProductID,
+	b.ProductName,
+	((a.total_sales - a.prior_month_total_sales)::float / a.prior_month_total_sales::float)*100.0 as sales_growth_rate
+FROM
+	lagged_product_sales as a
+JOIN
+	ProductDetails as b
+ON a.ProductID = b.ProductID
+ORDER BY 2 ASC;
